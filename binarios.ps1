@@ -24,15 +24,37 @@ if ($dialogResult -ne 'OK' -or [string]::IsNullOrWhiteSpace($folderBrowser.Selec
 
 $targetDir = $folderBrowser.SelectedPath
 
-Write-Host "`n[*] Scanning target: $targetDir" -ForegroundColor White
-Write-Host "[*] Indexing binaries..." -ForegroundColor Gray
+Write-Host "`n[*] TARGET: $targetDir" -ForegroundColor White
+Write-Host "[*] EXTENSION SELECTION" -ForegroundColor Cyan
 
-# Se indexan los archivos y se filtran por extension exacta para evitar el bug de -Include
+$chosenExts = @()
+$extList = @("dll", "exe", "sys", "bin")
+
+foreach ($ext in $extList) {
+    while ($true) {
+        $ans = (Read-Host "    U want to scan .$ext? (y/n)").Trim().ToLower()
+        if ($ans -eq 'y' -or $ans -eq 'yes') {
+            $chosenExts += $ext
+            break
+        } elseif ($ans -eq 'n' -or $ans -eq 'no') {
+            break
+        }
+    }
+}
+
+if ($chosenExts.Count -eq 0) {
+    Write-Host "`n[!] Bro you didn't select any extensions to scan. Exiting..." -ForegroundColor Yellow
+    exit
+}
+
+$extRegex = '^\.(' + ($chosenExts -join '|') + ')$'
+Write-Host "`n[*] Indexing binaries..." -ForegroundColor Gray
+
 $files = Get-ChildItem -LiteralPath $targetDir -File -Recurse -Force -ErrorAction SilentlyContinue | 
-         Where-Object { $_.Extension -match '^\.(exe|dll|sys|bin)$' }
+         Where-Object { $_.Extension -match $extRegex }
 
 if (-not $files) {
-    Write-Host "`n[!] No executable files found in the selected directory." -ForegroundColor Yellow
+    Write-Host "`n[!] No executable files found matching your choices in the selected directory." -ForegroundColor Yellow
     exit
 }
 
@@ -46,7 +68,7 @@ $suspicious = [System.Collections.Generic.List[PSObject]]::new()
 $count = 0
 foreach ($file in $files) {
     $count++
-    if ($count % 50 -eq 0) {
+    if ($count % 25 -eq 0) {
         Write-Progress -Activity "Auditing Binaries" -Status ("Checking {0}/{1}" -f $count, $files.Count) -PercentComplete (($count / $files.Count) * 100)
     }
 
