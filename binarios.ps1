@@ -23,12 +23,14 @@ if ($dialogResult -ne 'OK' -or [string]::IsNullOrWhiteSpace($folderBrowser.Selec
 }
 
 $targetDir = $folderBrowser.SelectedPath
-$extensions = @("*.dll", "*.exe", "*.sys", "*.bin")
 
 Write-Host "`n[*] Scanning target: $targetDir" -ForegroundColor White
 Write-Host "[*] Indexing binaries..." -ForegroundColor Gray
 
-$files = Get-ChildItem -Path $targetDir -Include $extensions -File -Recurse -ErrorAction SilentlyContinue
+# Se indexan los archivos y se filtran por extension exacta para evitar el bug de -Include
+$files = Get-ChildItem -LiteralPath $targetDir -File -Recurse -Force -ErrorAction SilentlyContinue | 
+         Where-Object { $_.Extension -match '^\.(exe|dll|sys|bin)$' }
+
 if (-not $files) {
     Write-Host "`n[!] No executable files found in the selected directory." -ForegroundColor Yellow
     exit
@@ -49,20 +51,22 @@ foreach ($file in $files) {
     }
 
     try {
-        $sig = Get-AuthenticodeSignature -FilePath $file.FullName -ErrorAction SilentlyContinue
-        $status = $sig.Status
-        $signer = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "None" }
+        $sig = Get-AuthenticodeSignature -LiteralPath $file.FullName -ErrorAction SilentlyContinue
+        $status = if ($sig) { $sig.Status.ToString() } else { "NotSigned" }
+        $signer = if ($sig -and $sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "None" }
 
         if ($status -eq "NotSigned") {
             $unsigned.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Size = [math]::Round($file.Length/1KB, 2) })
         }
         elseif ($status -ne "Valid") {
-            $invalid.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Status = $status.ToString(); Signer = $signer })
+            $invalid.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Status = $status; Signer = $signer })
         }
         elseif ($targetDir -match "System32" -and $signer -notmatch "Microsoft") {
             $suspicious.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Signer = $signer; Size = [math]::Round($file.Length/1KB, 2) })
         }
-    } catch {}
+    } catch {
+        $unsigned.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Size = [math]::Round($file.Length/1KB, 2) })
+    }
 }
 Write-Progress -Activity "Auditing Binaries" -Completed
 
@@ -70,6 +74,7 @@ if ($invalid.Count -gt 0) {
     Write-Host "`nCRITICAL: TAMPERED OR INVALID SIGNATURES ($($invalid.Count))" -ForegroundColor Red
     foreach ($item in $invalid) {
         Write-Host ("  [!] {0}" -f $item.File) -ForegroundColor Red
+        Write-Host ("      Path:   {0}" -f $item.Path) -ForegroundColor Gray
         Write-Host ("      Status: {0}" -f $item.Status) -ForegroundColor DarkRed
     }
 } else {
@@ -80,6 +85,7 @@ if ($unsigned.Count -gt 0) {
     Write-Host "`nWARNING: UNSIGNED BINARIES ($($unsigned.Count))" -ForegroundColor Yellow
     foreach ($item in $unsigned) {
         Write-Host ("  [-] {0,-32} {1,8} KB" -f $item.File, $item.Size) -ForegroundColor White
+        Write-Host ("      Path: {0}" -f $item.Path) -ForegroundColor Gray
     }
 } else {
     Write-Host "`nUnsigned Binaries: None" -ForegroundColor Green
@@ -91,6 +97,7 @@ if ($suspicious.Count -gt 0) {
         $shortSigner = $item.Signer
         if ($shortSigner.Length -gt 60) { $shortSigner = $shortSigner.Substring(0, 57) + "..." }
         Write-Host ("  [~] {0}" -f $item.File) -ForegroundColor Yellow
+        Write-Host ("      Path:   {0}" -f $item.Path) -ForegroundColor Gray
         Write-Host ("      Signer: {0}" -f $shortSigner) -ForegroundColor DarkGray
     }
 } elseif ($targetDir -match "System32") {
