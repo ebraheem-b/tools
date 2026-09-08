@@ -29,22 +29,18 @@ Write-Host "`n[*] TARGET: $targetDir" -ForegroundColor White
 Write-Host "[*] EXTENSION SELECTION" -ForegroundColor Cyan
 
 $chosenExts = @()
-$extList = @("dll", "exe", "sys", "bin")
 
-foreach ($ext in $extList) {
-    while ($true) {
-        # Concatenación estricta para evitar bugs de Invoke-Expression
-        $promptMsg = "    U want to scan ." + $ext + " (y/n)"
-        $ans = (Read-Host $promptMsg).Trim().ToLower()
-        
-        if ($ans -eq 'y' -or $ans -eq 'yes') {
-            $chosenExts += $ext
-            break
-        } elseif ($ans -eq 'n' -or $ans -eq 'no') {
-            break
-        }
-    }
-}
+$ans1 = (Read-Host "    U want to scan .dll (y/n)").Trim().ToLower()
+if ($ans1 -eq 'y' -or $ans1 -eq 'yes') { $chosenExts += "dll" }
+
+$ans2 = (Read-Host "    U want to scan .exe (y/n)").Trim().ToLower()
+if ($ans2 -eq 'y' -or $ans2 -eq 'yes') { $chosenExts += "exe" }
+
+$ans3 = (Read-Host "    U want to scan .sys (y/n)").Trim().ToLower()
+if ($ans3 -eq 'y' -or $ans3 -eq 'yes') { $chosenExts += "sys" }
+
+$ans4 = (Read-Host "    U want to scan .bin (y/n)").Trim().ToLower()
+if ($ans4 -eq 'y' -or $ans4 -eq 'yes') { $chosenExts += "bin" }
 
 if ($chosenExts.Count -eq 0) {
     Write-Host "`n[!] Bro you didn't select any extensions to scan. Exiting..." -ForegroundColor Yellow
