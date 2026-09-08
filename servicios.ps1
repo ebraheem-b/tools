@@ -135,21 +135,15 @@ if ($ntfsDrives) {
     foreach ($d in $ntfsDrives) {
         $driveLetter = $d.DeviceID
         try {
-            $usnQuery = fsutil usn queryjournal $driveLetter 2>&1
-            if ($LASTEXITCODE -eq 0 -and ($usnQuery -match "Usn Journal ID" -or $usnQuery -match "ID del diario USN")) {
-                $maxSizeLine = ($usnQuery | Select-String "Maximum Size|Tamaño máximo") -replace ".*:\s*", ""
-                Write-Host ("  {0} : Enabled" -f $driveLetter) -ForegroundColor Green -NoNewline
-                if ($maxSizeLine) {
-                    $sizeBytes = [int64]($maxSizeLine.Trim().Split(" ")[0])
-                    Write-Host (" | Size: {0} MB" -f [math]::Round($sizeBytes / 1MB, 2)) -ForegroundColor Yellow
-                } else {
-                    Write-Host ""
-                }
+            # Forzamos consulta limpia ignorando idioma del SO
+            $query = fsutil usn queryjournal "$driveLetter\" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host ("  {0} : Enabled" -f $driveLetter) -ForegroundColor Green
             } else {
                 Write-Host ("  {0} : Not Found / Deleted (CLEANED)" -f $driveLetter) -ForegroundColor Red
             }
         } catch {
-            Write-Host ("  {0} : Unable to query" -f $driveLetter) -ForegroundColor Yellow
+            Write-Host ("  {0} : Not Found / Deleted (CLEANED)" -f $driveLetter) -ForegroundColor Red
         }
     }
 } else {
@@ -451,4 +445,3 @@ try {
     Write-Host "  Error accessing system information: $($_.Exception.Message)" -ForegroundColor Red
 }
 
-Write-Host "`nCheck Complete, hit up @praiselily if u run into any issues." -ForegroundColor Cyan
