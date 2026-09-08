@@ -7,127 +7,437 @@ if (-not $isAdmin) {
     exit
 }
 
-Clear-Host
-Write-Host "made with love by lily<3" -ForegroundColor Cyan
-Write-Host "`nBINARIES & SIGNATURE AUDIT" -ForegroundColor Cyan
-
-Add-Type -AssemblyName System.Windows.Forms
-$folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-$folderBrowser.Description = "Select the folder to audit (e.g. C:\Windows\System32, FiveM AppData, etc.)"
-$folderBrowser.ShowNewFolderButton = $false
-
-$dialogResult = $folderBrowser.ShowDialog()
-
-if ($dialogResult -ne 'OK' -or [string]::IsNullOrWhiteSpace($folderBrowser.SelectedPath)) {
-    Write-Host "`n[!] No folder selected. Operation cancelled." -ForegroundColor Yellow
-    exit
+try {
+    $bootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+    $uptime = (Get-Date) - $bootTime
+    Write-Host "SYSTEM BOOT TIME" -ForegroundColor Cyan
+    Write-Host ("  Last Boot: {0}" -f $bootTime.ToString("yyyy-MM-dd HH:mm:ss")) -ForegroundColor White
+    Write-Host ("  Uptime: {0} days, {1:D2}:{2:D2}:{3:D2}" -f $uptime.Days, $uptime.Hours, $uptime.Minutes, $uptime.Seconds) -ForegroundColor White
+} catch {
+    Write-Host "Unable to retrieve boot time information" -ForegroundColor Red
 }
 
-$targetDir = $folderBrowser.SelectedPath
+$drives = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.DriveType -ne 5 }
+if ($drives) {
+    Write-Host "`nCONNECTED DRIVES" -ForegroundColor Cyan
+    foreach ($drive in $drives) {
+        Write-Host ("  {0}: {1}" -f $drive.DeviceID, $drive.FileSystem) -ForegroundColor Green
+    }
+}
 
-Write-Host "`n[*] TARGET: $targetDir" -ForegroundColor White
-Write-Host "[*] EXTENSION SELECTION" -ForegroundColor Cyan
+try {
+    $bcd = bcdedit /enum "{current}" 2>$null
+    Write-Host "`nKERNEL INTEGRITY" -ForegroundColor Cyan
+    if ($bcd -match "testsigning\s+Yes") {
+        Write-Host "  TestSigning: " -NoNewline -ForegroundColor White
+        Write-Host "Enabled (Unsafe)" -ForegroundColor Red
+    } else {
+        Write-Host "  TestSigning: " -NoNewline -ForegroundColor White
+        Write-Host "Disabled" -ForegroundColor Green
+    }
+    if ($bcd -match "nointegritychecks\s+Yes") {
+        Write-Host "  Integrity Checks: " -NoNewline -ForegroundColor White
+        Write-Host "Disabled" -ForegroundColor Red
+    } else {
+        Write-Host "  Integrity Checks: " -NoNewline -ForegroundColor White
+        Write-Host "Enforced" -ForegroundColor Green
+    }
+} catch {}
 
-$chosenExts = @()
-$extList = @("dll", "exe", "sys", "bin")
+Write-Host "`nSERVICE STATUS" -ForegroundColor Cyan
 
-foreach ($ext in $extList) {
-    while ($true) {
-        # Formato estricto para evitar bugs de expansión de variables en memoria
-        $promptMsg = "    U want to scan .{0} (y/n)" -f $ext
-        $ans = (Read-Host $promptMsg).Trim().ToLower()
-        
-        if ($ans -eq 'y' -or $ans -eq 'yes') {
-            $chosenExts += $ext
-            break
-        } elseif ($ans -eq 'n' -or $ans -eq 'no') {
-            break
+$services = @(
+    @{Name = "SysMain"; DisplayName = "SysMain"},
+    @{Name = "PcaSvc"; DisplayName = "Program Compatibility Assistant Service"},
+    @{Name = "DPS"; DisplayName = "Diagnostic Policy Service"},
+    @{Name = "EventLog"; DisplayName = "Windows Event Log"},
+    @{Name = "Schedule"; DisplayName = "Task Scheduler"},
+    @{Name = "Bam"; DisplayName = "Background Activity Moderator"},
+    @{Name = "Dusmsvc"; DisplayName = "Data Usage"},
+    @{Name = "Appinfo"; DisplayName = "Application Information"},
+    @{Name = "CDPSvc"; DisplayName = "Connected Devices Platform Service"},
+    @{Name = "DcomLaunch"; DisplayName = "DCOM Server Process Launcher"},
+    @{Name = "PlugPlay"; DisplayName = "Plug and Play"},
+    @{Name = "wsearch"; DisplayName = "Windows Search"},
+    @{Name = "Dnscache"; DisplayName = "DNS Client Cache"}
+)
+
+foreach ($svc in $services) {
+    $service = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+    if ($service) {
+        if ($service.Status -eq "Running") {
+            $displayName = $service.DisplayName
+            if ($displayName.Length -gt 40) {
+                $displayName = $displayName.Substring(0, 37) + "..."
+            }
+            Write-Host ("  {0,-12} {1,-40}" -f $svc.Name, $displayName) -ForegroundColor Green -NoNewline
+            
+            if ($svc.Name -eq "Bam") {
+                Write-Host " | Enabled" -ForegroundColor Yellow
+            } else {
+                try {
+                    $process = Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'" | Select-Object ProcessId
+                    if ($process.ProcessId -gt 0) {
+                        $proc = Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue
+                        if ($proc) {
+                            Write-Host (" | {0}" -f $proc.StartTime.ToString("HH:mm:ss")) -ForegroundColor Yellow
+                        } else {
+                            Write-Host " | N/A" -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Host " | N/A" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Host " | N/A" -ForegroundColor Yellow
+                }
+            }
+        } else {
+            $displayName = $service.DisplayName
+            if ($displayName.Length -gt 40) {
+                $displayName = $displayName.Substring(0, 37) + "..."
+            }
+            Write-Host ("  {0,-12} {1,-40} {2}" -f $svc.Name, $displayName, $service.Status) -ForegroundColor Red
+        }
+    } else {
+        Write-Host ("  {0,-12} {1,-40} {2}" -f $svc.Name, "Not Found", "Stopped") -ForegroundColor Yellow
+    }
+}
+
+Write-Host "`nREGISTRY" -ForegroundColor Cyan
+
+$settings = @(
+    @{ Name = "CMD"; Path = "HKCU:\Software\Policies\Microsoft\Windows\System"; Key = "DisableCMD"; Warning = "Disabled"; Safe = "Available" },
+    @{ Name = "PowerShell Logging"; Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"; Key = "EnableScriptBlockLogging"; Warning = "Disabled"; Safe = "Enabled" },
+    @{ Name = "Activities Cache"; Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Key = "EnableActivityFeed"; Warning = "Disabled"; Safe = "Enabled" },
+    @{ Name = "Prefetch Enabled"; Path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"; Key = "EnablePrefetcher"; Warning = "Disabled"; Safe = "Enabled" },
+    @{ Name = "UAC Status"; Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"; Key = "EnableLUA"; Warning = "Disabled"; Safe = "Enabled" }
+)
+
+foreach ($s in $settings) {
+    $status = Get-ItemProperty -Path $s.Path -Name $s.Key -ErrorAction SilentlyContinue
+    Write-Host "  " -NoNewline
+    if ($status -and $status.$($s.Key) -eq 0) {
+        Write-Host "$($s.Name): " -NoNewline -ForegroundColor White
+        Write-Host "$($s.Warning)" -ForegroundColor Red
+    } else {
+        Write-Host "$($s.Name): " -NoNewline -ForegroundColor White
+        Write-Host "$($s.Safe)" -ForegroundColor Green
+    }
+}
+
+Write-Host "`nUSN JOURNAL STATUS" -ForegroundColor Cyan
+
+$ntfsDrives = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.FileSystem -eq "NTFS" }
+if ($ntfsDrives) {
+    foreach ($d in $ntfsDrives) {
+        $driveLetter = $d.DeviceID
+        try {
+            $query = fsutil usn queryjournal "$driveLetter\" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host ("  {0} : Enabled" -f $driveLetter) -ForegroundColor Green
+            } else {
+                Write-Host ("  {0} : Not Found / Deleted (CLEANED)" -f $driveLetter) -ForegroundColor Red
+            }
+        } catch {
+            Write-Host ("  {0} : Not Found / Deleted (CLEANED)" -f $driveLetter) -ForegroundColor Red
         }
     }
+} else {
+    Write-Host "  No NTFS volumes found" -ForegroundColor Yellow
 }
 
-if ($chosenExts.Count -eq 0) {
-    Write-Host "`n[!] Bro you didn't select any extensions to scan. Exiting..." -ForegroundColor Yellow
-    exit
-}
-
-$extRegex = '^\.(' + ($chosenExts -join '|') + ')$'
-Write-Host "`n[*] Indexing binaries..." -ForegroundColor Gray
-
-$files = Get-ChildItem -LiteralPath $targetDir -File -Recurse -Force -ErrorAction SilentlyContinue | 
-         Where-Object { $_.Extension -match $extRegex }
-
-if (-not $files) {
-    Write-Host "`n[!] No executable files found matching your choices in the selected directory." -ForegroundColor Yellow
-    exit
-}
-
-Write-Host ("[*] Found {0} binaries. Checking signatures..." -f $files.Count) -ForegroundColor Gray
-Write-Host "----------------------------------------------------------"
-
-$unsigned = [System.Collections.Generic.List[PSObject]]::new()
-$invalid = [System.Collections.Generic.List[PSObject]]::new()
-$suspicious = [System.Collections.Generic.List[PSObject]]::new()
-
-$count = 0
-foreach ($file in $files) {
-    $count++
-    if ($count % 25 -eq 0) {
-        Write-Progress -Activity "Auditing Binaries" -Status ("Checking {0}/{1}" -f $count, $files.Count) -PercentComplete (($count / $files.Count) * 100)
+function Check-EventLog {
+    param ($logName, $eventID, $message)
+    $event = Get-WinEvent -LogName $logName -FilterXPath "*[System[EventID=$eventID]]" -MaxEvents 1 -ErrorAction SilentlyContinue
+    if ($event) {
+        Write-Host "  $message at: " -NoNewline -ForegroundColor White
+        Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
+    } else {
+        Write-Host "  $message - No records found" -ForegroundColor Green
     }
+}
+
+function Check-RecentEventLog {
+    param ($logName, $eventIDs, $message)
+    $event = Get-WinEvent -LogName $logName -FilterXPath "*[System[EventID=$($eventIDs -join ' or EventID=')]]" -MaxEvents 1 -ErrorAction SilentlyContinue
+    if ($event) {
+        Write-Host "  $message (ID: $($event.Id)) at: " -NoNewline -ForegroundColor White
+        Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
+    } else {
+        Write-Host "  $message - No records found" -ForegroundColor Green
+    }
+}
+
+function Check-DeviceDeleted {
+    try {
+        $event = Get-WinEvent -LogName "Microsoft-Windows-Kernel-PnP/Configuration" -FilterXPath "*[System[EventID=400]]" -MaxEvents 1 -ErrorAction SilentlyContinue
+        if ($event) {
+            Write-Host "  Device configuration changed at: " -NoNewline -ForegroundColor White
+            Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
+            return
+        }
+    } catch {}
 
     try {
-        $sig = Get-AuthenticodeSignature -LiteralPath $file.FullName -ErrorAction SilentlyContinue
-        $status = if ($sig) { $sig.Status.ToString() } else { "NotSigned" }
-        $signer = if ($sig -and $sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "None" }
+        $event = Get-WinEvent -FilterHashtable @{LogName="System"; ID=225} -MaxEvents 1 -ErrorAction SilentlyContinue
+        if ($event) {
+            Write-Host "  Device removed at: " -NoNewline -ForegroundColor White
+            Write-Host $event.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
+            return
+        }
+    } catch {}
 
-        if ($status -eq "NotSigned") {
-            $unsigned.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Size = [math]::Round($file.Length/1KB, 2) })
+    try {
+        $events = Get-WinEvent -LogName "System" | Where-Object {$_.Id -eq 225 -or $_.Id -eq 400} | Sort-Object TimeCreated -Descending | Select-Object -First 1
+        if ($events) {
+            Write-Host "  Last device change at: " -NoNewline -ForegroundColor White
+            Write-Host $events.TimeCreated.ToString("MM/dd HH:mm") -ForegroundColor Yellow
+            return
         }
-        elseif ($status -ne "Valid") {
-            $invalid.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Status = $status; Signer = $signer })
-        }
-        elseif ($targetDir -match "System32" -and $signer -notmatch "Microsoft") {
-            $suspicious.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Signer = $signer; Size = [math]::Round($file.Length/1KB, 2) })
-        }
-    } catch {
-        $unsigned.Add([PSCustomObject]@{ File = $file.Name; Path = $file.FullName; Size = [math]::Round($file.Length/1KB, 2) })
-    }
+    } catch {}
+
+    Write-Host "  Device changes - No records found" -ForegroundColor Green
 }
-Write-Progress -Activity "Auditing Binaries" -Completed
 
-if ($invalid.Count -gt 0) {
-    Write-Host "`nCRITICAL: TAMPERED OR INVALID SIGNATURES ($($invalid.Count))" -ForegroundColor Red
-    foreach ($item in $invalid) {
-        Write-Host ("  [!] {0}" -f $item.File) -ForegroundColor Red
-        Write-Host ("      Path:   {0}" -f $item.Path) -ForegroundColor Gray
-        Write-Host ("      Status: {0}" -f $item.Status) -ForegroundColor DarkRed
+Write-Host "`nEVENT LOGS" -ForegroundColor Cyan
+
+Check-EventLog "Application" 3079 "USN Journal cleared"
+Check-RecentEventLog "System" @(104, 1102) "Event Logs cleared"
+Check-EventLog "System" 1074 "Last PC Shutdown"
+Check-EventLog "System" 41 "Kernel-Power Abrupt Shutdown"
+Check-EventLog "System" 1001 "BSOD / BugCheck Occurred"
+Check-EventLog "Security" 4616 "System time changed"
+Check-EventLog "System" 6005 "Event Log Service started"
+Check-EventLog "Microsoft-Windows-Windows Defender/Operational" 1116 "Defender Malware Triggered"
+Check-EventLog "Microsoft-Windows-Windows Defender/Operational" 5001 "Defender Real-Time Protection Disabled"
+Check-EventLog "Microsoft-Windows-Windows Defender/Operational" 5007 "Defender Exclusion Added"
+Check-DeviceDeleted
+
+try {
+    $cheatMatch = Get-DnsClientCache -ErrorAction SilentlyContinue | Where-Object { $_.Entry -match "keyauth|redengine|eauth|skript|eulen|asgard|monstermenu|tzproject|hxcheats|shey\.tech|cobraloader" }
+    Write-Host "`nDNS CACHE" -ForegroundColor Cyan
+    if ($cheatMatch) {
+        Write-Host "  Suspicious DNS records found:" -ForegroundColor Red
+        foreach ($m in $cheatMatch) {
+            Write-Host ("    {0} : {1}" -f $m.Entry, $m.Data) -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  DNS Cache - Clean" -ForegroundColor Green
+    }
+} catch {}
+
+$prefetchPath = "$env:SystemRoot\Prefetch"
+if (Test-Path $prefetchPath) {
+    Write-Host "`nPREFETCH INTEGRITY" -ForegroundColor Cyan
+    
+    $files = Get-ChildItem -Path $prefetchPath -Filter *.pf -Force -ErrorAction SilentlyContinue
+    if (-not $files) {
+        Write-Host "  No prefetch found?? Check the folder please" -ForegroundColor Yellow
+    } else {
+        $hashTable = @{}
+        $suspiciousFiles = @{}
+        $totalFiles = $files.Count
+
+        $hiddenFiles = @()
+        $readOnlyFiles = @()
+        $hiddenAndReadOnlyFiles = @()
+        $adsFiles = @()
+        $errorFiles = @()
+
+        foreach ($file in $files) {
+            try {
+                $isHidden = $file.Attributes -band [System.IO.FileAttributes]::Hidden
+                $isReadOnly = $file.Attributes -band [System.IO.FileAttributes]::ReadOnly
+                
+                if ($isHidden -and $isReadOnly) {
+                    $hiddenAndReadOnlyFiles += $file
+                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
+                        $suspiciousFiles[$file.Name] = "Hidden and Read-only"
+                    }
+                } elseif ($isHidden) {
+                    $hiddenFiles += $file
+                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
+                        $suspiciousFiles[$file.Name] = "Hidden file"
+                    }
+                } elseif ($isReadOnly) {
+                    $readOnlyFiles += $file
+                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
+                        $suspiciousFiles[$file.Name] = "Read-only file"
+                    }
+                }
+
+                $streams = Get-Item -Path $file.FullName -Stream * -ErrorAction SilentlyContinue | Where-Object { $_.Stream -ne ':$DATA' }
+                if ($streams) {
+                    $adsFiles += $file
+                    if (-not $suspiciousFiles.ContainsKey($file.Name)) {
+                        $suspiciousFiles[$file.Name] = "Alternate Data Stream ($($streams.Stream))"
+                    }
+                }
+
+                $hash = Get-FileHash -Path $file.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue
+                if ($hash) {
+                    if ($hashTable.ContainsKey($hash.Hash)) {
+                        $hashTable[$hash.Hash].Add($file.Name)
+                    } else {
+                        $hashTable[$hash.Hash] = [System.Collections.Generic.List[string]]::new()
+                        $hashTable[$hash.Hash].Add($file.Name)
+                    }
+                }
+            } catch {
+                $errorFiles += $file
+                if (-not $suspiciousFiles.ContainsKey($file.Name)) {
+                    $suspiciousFiles[$file.Name] = "Error analyzing file: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        if ($hiddenAndReadOnlyFiles.Count -gt 0) {
+            Write-Host "  Hidden & Read-only Files: $($hiddenAndReadOnlyFiles.Count) found" -ForegroundColor Yellow
+            foreach ($file in $hiddenAndReadOnlyFiles) {
+                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
+            }
+        }
+
+        if ($hiddenFiles.Count -gt 0) {
+            Write-Host "  Hidden Files: $($hiddenFiles.Count) found" -ForegroundColor Yellow
+            foreach ($file in $hiddenFiles) {
+                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
+            }
+        } else {
+            Write-Host "  Hidden Files: None" -ForegroundColor Green
+        }
+
+        if ($readOnlyFiles.Count -gt 0) {
+            Write-Host "  Read-Only Files: $($readOnlyFiles.Count)" -ForegroundColor Yellow
+            foreach ($file in $readOnlyFiles) {
+                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
+            }
+        } else {
+            Write-Host "  Read-Only Files: None" -ForegroundColor Green
+        }
+
+        if ($adsFiles.Count -gt 0) {
+            Write-Host "  ADS Files: $($adsFiles.Count) found" -ForegroundColor Red
+            foreach ($file in $adsFiles) {
+                Write-Host ("    {0}" -f $file.Name) -ForegroundColor White
+            }
+        } else {
+            Write-Host "  ADS Files: None" -ForegroundColor Green
+        }
+
+        $repeatedHashes = $hashTable.GetEnumerator() | Where-Object { $_.Value.Count -gt 1 }
+        if ($repeatedHashes) {
+            Write-Host "  Duplicate Files: $($repeatedHashes.Count) sets found" -ForegroundColor Yellow
+            foreach ($entry in $repeatedHashes) {
+                foreach ($file in $entry.Value) {
+                    if (-not $suspiciousFiles.ContainsKey($file)) {
+                        $suspiciousFiles[$file] = "Duplicate file"
+                    }
+                }
+                Write-Host ("    Duplicate set: {0}" -f ($entry.Value -join ", ")) -ForegroundColor White
+            }
+        } else {
+            Write-Host "  Duplicates: None" -ForegroundColor Green
+        }
+
+        if ($suspiciousFiles.Count -gt 0) {
+            Write-Host "`n  SUSPICIOUS FILES FOUND: $($suspiciousFiles.Count)/$totalFiles" -ForegroundColor Yellow
+            foreach ($entry in $suspiciousFiles.GetEnumerator() | Sort-Object Key) {
+                Write-Host ("    {0} : {1}" -f $entry.Key, $entry.Value) -ForegroundColor White
+            }
+        } else {
+            Write-Host "`n  Prefetch integrity: Clean ($totalFiles files checked)" -ForegroundColor Green
+        }
     }
 } else {
-    Write-Host "`nTampered Signatures: None" -ForegroundColor Green
+    Write-Host "`nCouldnt find prefetch folder?? (check yo paths hoe)" -ForegroundColor Red
 }
 
-if ($unsigned.Count -gt 0) {
-    Write-Host "`nWARNING: UNSIGNED BINARIES ($($unsigned.Count))" -ForegroundColor Yellow
-    foreach ($item in $unsigned) {
-        Write-Host ("  [-] {0,-32} {1,8} KB" -f $item.File, $item.Size) -ForegroundColor White
-        Write-Host ("      Path: {0}" -f $item.Path) -ForegroundColor Gray
-    }
-} else {
-    Write-Host "`nUnsigned Binaries: None" -ForegroundColor Green
-}
+try {
+    $recycleBinPath = "$env:SystemDrive" + '\$Recycle.Bin'
+    
+    Write-Host "`nRECYCLE BIN" -ForegroundColor Cyan
 
-if ($suspicious.Count -gt 0) {
-    Write-Host "`nNOTICE: THIRD-PARTY SIGNED BINARIES IN SYSTEM32 ($($suspicious.Count))" -ForegroundColor Cyan
-    foreach ($item in $suspicious) {
-        $shortSigner = $item.Signer
-        if ($shortSigner.Length -gt 60) { $shortSigner = $shortSigner.Substring(0, 57) + "..." }
-        Write-Host ("  [~] {0}" -f $item.File) -ForegroundColor Yellow
-        Write-Host ("      Path:   {0}" -f $item.Path) -ForegroundColor Gray
-        Write-Host ("      Signer: {0}" -f $shortSigner) -ForegroundColor DarkGray
+    if (Test-Path $recycleBinPath) {
+        $recycleBinFolder = Get-Item -LiteralPath $recycleBinPath -Force
+        $userFolders = Get-ChildItem -LiteralPath $recycleBinPath -Directory -Force -ErrorAction SilentlyContinue
+        
+        if ($userFolders) {
+            $allDeletedItems = @()
+            $latestModTime = $recycleBinFolder.LastWriteTime
+            
+            foreach ($userFolder in $userFolders) {
+                if ($userFolder.LastWriteTime -gt $latestModTime) {
+                    $latestModTime = $userFolder.LastWriteTime
+                }
+                
+                $userItems = Get-ChildItem -LiteralPath $userFolder.FullName -File -Force -ErrorAction SilentlyContinue
+                if ($userItems) {
+                    $allDeletedItems += $userItems
+                    
+                    $latestFile = $userItems | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                    if ($latestFile -and $latestFile.LastWriteTime -gt $latestModTime) {
+                        $latestModTime = $latestFile.LastWriteTime
+                    }
+                }
+            }
+            
+            Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
+            Write-Host $latestModTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Yellow
+            
+            if ($allDeletedItems.Count -gt 0) {
+                Write-Host "  Total Items: " -NoNewline -ForegroundColor White
+                Write-Host $allDeletedItems.Count -ForegroundColor Yellow
+                
+                $latestItem = $allDeletedItems | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                Write-Host "  Latest Item: " -NoNewline -ForegroundColor White
+                Write-Host $latestItem.Name -ForegroundColor Gray
+            } else {
+                Write-Host "  Status: " -NoNewline -ForegroundColor White
+                Write-Host "Folders present but empty" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "  Status: " -NoNewline -ForegroundColor White
+            Write-Host "Emptyy" -ForegroundColor Green
+            Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
+            Write-Host $recycleBinFolder.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Green
+        }
+        
+        $clearEvent = Get-WinEvent -FilterHashtable @{LogName="System"; Id=10006} -MaxEvents 1 -ErrorAction SilentlyContinue
+        if ($clearEvent) {
+            Write-Host "  Last Cleared (Event): " -NoNewline -ForegroundColor White
+            Write-Host $clearEvent.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Red
+        }
+    } else {
+        Write-Host "  Recycle Bin not found at: $recycleBinPath" -ForegroundColor Yellow
+        Write-Host "  Note: Recycle Bin may be empty or on different drive" -ForegroundColor Gray
     }
-} elseif ($targetDir -match "System32") {
-    Write-Host "`nThird-Party Binaries in System32: None" -ForegroundColor Green
+
+    $consoleHistoryPath = "$env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt"
+    Write-Host "`nCONSOLE HOST HISTORY" -ForegroundColor Cyan
+    
+    if (Test-Path $consoleHistoryPath) {
+        $historyFile = Get-Item -Path $consoleHistoryPath -Force
+        Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
+        Write-Host $historyFile.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Yellow
+
+        $attributes = $historyFile.Attributes
+        if ($attributes -ne "Archive") {
+            Write-Host "  Attributes: " -NoNewline -ForegroundColor White
+            Write-Host $attributes -ForegroundColor Yellow
+        } else {
+            Write-Host "  Attributes: Normal" -ForegroundColor Green
+        }
+
+        $fileSize = $historyFile.Length
+        Write-Host "  File Size: " -NoNewline -ForegroundColor White
+        Write-Host "$([math]::Round($fileSize/1024, 2)) KB" -ForegroundColor Yellow
+    } else {
+        Write-Host "  File not found: $consoleHistoryPath" -ForegroundColor Yellow
+        Write-Host "  Note: PowerShell history may be disabled or never used" -ForegroundColor Gray
+    }
+} catch {
+    Write-Host "  Error accessing system information: $($_.Exception.Message)" -ForegroundColor Red
 }
 
 Write-Host "`nCheck Complete." -ForegroundColor Cyan
