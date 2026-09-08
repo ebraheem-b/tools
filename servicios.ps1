@@ -7,9 +7,6 @@ if (-not $isAdmin) {
     exit
 }
 
-Write-Host "made with love by lily<3" -ForegroundColor Cyan
-Write-Host ""
-
 try {
     $bootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
     $uptime = (Get-Date) - $bootTime
