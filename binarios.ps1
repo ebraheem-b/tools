@@ -8,6 +8,7 @@ if (-not $isAdmin) {
 }
 
 Clear-Host
+Write-Host "made with love by lily<3" -ForegroundColor Cyan
 Write-Host "`nBINARIES & SIGNATURE AUDIT" -ForegroundColor Cyan
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -32,7 +33,10 @@ $extList = @("dll", "exe", "sys", "bin")
 
 foreach ($ext in $extList) {
     while ($true) {
-        $ans = (Read-Host "    U want to scan .$ext? (y/n)").Trim().ToLower()
+        # Concatenación estricta para evitar bugs de Invoke-Expression
+        $promptMsg = "    U want to scan ." + $ext + " (y/n)"
+        $ans = (Read-Host $promptMsg).Trim().ToLower()
+        
         if ($ans -eq 'y' -or $ans -eq 'yes') {
             $chosenExts += $ext
             break
