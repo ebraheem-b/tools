@@ -135,7 +135,6 @@ if ($ntfsDrives) {
     foreach ($d in $ntfsDrives) {
         $driveLetter = $d.DeviceID
         try {
-            # Forzamos consulta limpia ignorando idioma del SO
             $query = fsutil usn queryjournal "$driveLetter\" 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Host ("  {0} : Enabled" -f $driveLetter) -ForegroundColor Green
@@ -360,7 +359,7 @@ if (Test-Path $prefetchPath) {
 try {
     $recycleBinPath = "$env:SystemDrive" + '\$Recycle.Bin'
     
-    Write-Host "`nRecycle Bin" -ForegroundColor Cyan
+    Write-Host "`nRECYCLE BIN" -ForegroundColor Cyan
 
     if (Test-Path $recycleBinPath) {
         $recycleBinFolder = Get-Item -LiteralPath $recycleBinPath -Force
@@ -418,30 +417,30 @@ try {
     }
 
     $consoleHistoryPath = "$env:USERPROFILE\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt"
-    Write-Host "`n  Console Host History:" -ForegroundColor Cyan
+    Write-Host "`nCONSOLE HOST HISTORY" -ForegroundColor Cyan
     
     if (Test-Path $consoleHistoryPath) {
         $historyFile = Get-Item -Path $consoleHistoryPath -Force
-        Write-Host "    Last Modified: " -NoNewline -ForegroundColor White
+        Write-Host "  Last Modified: " -NoNewline -ForegroundColor White
         Write-Host $historyFile.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor Yellow
 
         $attributes = $historyFile.Attributes
         if ($attributes -ne "Archive") {
-            Write-Host "    Attributes: " -NoNewline -ForegroundColor White
+            Write-Host "  Attributes: " -NoNewline -ForegroundColor White
             Write-Host $attributes -ForegroundColor Yellow
         } else {
-            Write-Host "    Attributes: Normal" -ForegroundColor Green
+            Write-Host "  Attributes: Normal" -ForegroundColor Green
         }
 
         $fileSize = $historyFile.Length
-        Write-Host "    File Size: " -NoNewline -ForegroundColor White
+        Write-Host "  File Size: " -NoNewline -ForegroundColor White
         Write-Host "$([math]::Round($fileSize/1024, 2)) KB" -ForegroundColor Yellow
     } else {
-        Write-Host "    File not found: $consoleHistoryPath" -ForegroundColor Yellow
-        Write-Host "    Note: PowerShell history may be disabled or never used" -ForegroundColor Gray
+        Write-Host "  File not found: $consoleHistoryPath" -ForegroundColor Yellow
+        Write-Host "  Note: PowerShell history may be disabled or never used" -ForegroundColor Gray
     }
-
 } catch {
     Write-Host "  Error accessing system information: $($_.Exception.Message)" -ForegroundColor Red
 }
 
+Write-Host "`nCheck Complete." -ForegroundColor Cyan
