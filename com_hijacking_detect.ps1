@@ -1,11 +1,14 @@
 $isAdmin = [System.Security.Principal.WindowsPrincipal]::new([System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "`n[!] Administrator privileges required. Please run PowerShell as Admin." -ForegroundColor Red
+    Write-Host "`n╔══════════════════════════════════════════════════╗" -ForegroundColor Red
+    Write-Host "║           ADMINISTRATOR PRIVILEGES REQUIRED       ║" -ForegroundColor Red
+    Write-Host "║     Please run this script as Administrator!      ║" -ForegroundColor Red
+    Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Red
     exit
 }
 
 Clear-Host
-Write-Host "made with love by lily<3" -ForegroundColor Cyan
+Write-Host "by ebrahem" -ForegroundColor Cyan
 Write-Host "`nCOM HIJACKING & BINARY SIGNATURE AUDITOR" -ForegroundColor Cyan
 
 $registryPaths = @(
@@ -17,6 +20,18 @@ $suspiciousItems = [System.Collections.Generic.List[PSObject]]::new()
 $validComExts = @(".dll", ".ocx", ".ax", ".cpl")
 
 Write-Host "`n[*] Inspecting InprocServer32 entries..." -ForegroundColor Gray
+
+# Función auxiliar para comprobar la cabecera ejecutable PE (MZ)
+function Test-IsPEHeader {
+    param([string]$FilePath)
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+        if ($bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
+            return $true # Encabezado 'MZ' detectado
+        }
+    } catch {}
+    return $false
+}
 
 foreach ($regPath in $registryPaths) {
     if (-not (Test-Path $regPath)) { continue }
@@ -33,14 +48,14 @@ foreach ($regPath in $registryPaths) {
             $ext = [System.IO.Path]::GetExtension($expandedPath).ToLower()
             $isHkcu = $key.PSPath -match "HKEY_CURRENT_USER"
 
-            # 1. Archivos inexistentes referenciados (vulnerables a Phantom DLL Hijacking)
+            # 1. Archivo inexistente referenciado
             if (-not (Test-Path -LiteralPath $expandedPath)) {
-                if ($isHkcu -or $expandedPath -match 'AppData|Temp|Downloads') {
+                if ($isHkcu -or $expandedPath -match 'AppData|Temp|Downloads|Globalization') {
                     $suspiciousItems.Add([PSCustomObject]@{
                         CLSID   = $clsid
                         Path    = $expandedPath
                         Status  = "MissingFile"
-                        Reason  = "Referenced binary not found (Phantom Hijack)"
+                        Reason  = "Referenced payload not found (Phantom Hijack / Cleaner residual)"
                         Signer  = "N/A"
                         Level   = "Medium"
                     })
@@ -48,7 +63,10 @@ foreach ($regPath in $registryPaths) {
                 return
             }
 
-            # 2. Análisis de firma digital
+            # 2. Análisis de cabecera en crudo (Caza de camuflaje .nls / .dat / .bin)
+            $isPeBinary = Test-IsPEHeader -FilePath $expandedPath
+
+            # 3. Análisis de firma digital
             $sig = Get-AuthenticodeSignature -LiteralPath $expandedPath -ErrorAction SilentlyContinue
             $sigStatus = if ($sig) { $sig.Status.ToString() } else { "NotSigned" }
             $signer = if ($sig -and $sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "None" }
@@ -56,37 +74,40 @@ foreach ($regPath in $registryPaths) {
             $reasons = @()
             $threatLevel = "Low"
 
-            # Extensión anormal (.nls, .dat, .bin, etc.)
-            if ($ext -notin $validComExts) {
+            # DELATOR DEFINITIVO: Extensión no ejecutable pero con cabecera MZ real
+            if ($ext -notin $validComExts -and $isPeBinary) {
+                $reasons += "DISGUISED EXECUTABLE (PE/MZ Header in .$ext)"
+                $threatLevel = "Critical"
+            } elseif ($ext -notin $validComExts) {
                 $reasons += "Disguised extension ($ext)"
                 $threatLevel = "High"
             }
 
-            # Rutas de usuario / directorios escribibles
+            # Rutas sospechosas o de usuario
             if ($expandedPath -match 'AppData|Temp|Users\\Public|Downloads|Globalization\\Sorting') {
-                $reasons += "User-writable directory"
-                $threatLevel = "High"
+                $reasons += "User-writable or abnormal directory"
+                if ($threatLevel -ne "Critical") { $threatLevel = "High" }
             }
 
-            # Sobrescritura en HKCU (no requiere permisos de admin)
+            # Clave registrada en HKCU
             if ($isHkcu) {
                 $reasons += "HKCU User Override"
-                if ($threatLevel -ne "High") { $threatLevel = "Medium" }
+                if ($threatLevel -eq "Low") { $threatLevel = "Medium" }
             }
 
-            # Firma rota o manipulada
+            # Firma alterada o rota
             if ($sigStatus -ne "Valid" -and $sigStatus -ne "NotSigned") {
                 $reasons += "Tampered/Corrupt Signature ($sigStatus)"
                 $threatLevel = "Critical"
             }
 
-            # Binario sin firma en System32 o con firma no-Microsoft en directorios del sistema
+            # Binario no firmado
             if ($sigStatus -eq "NotSigned") {
                 $reasons += "Unsigned Binary"
-                $threatLevel = "High"
+                if ($threatLevel -eq "Low") { $threatLevel = "High" }
             } elseif ($expandedPath -match "System32" -and $signer -notmatch "Microsoft") {
                 $reasons += "Third-party signed in System32"
-                if ($threatLevel -ne "High" -and $threatLevel -ne "Critical") { $threatLevel = "Medium" }
+                if ($threatLevel -eq "Low") { $threatLevel = "Medium" }
             }
 
             if ($reasons.Count -gt 0) {
@@ -102,7 +123,6 @@ foreach ($regPath in $registryPaths) {
     }
 }
 
-# Mostrar resultados clasificados
 if ($suspiciousItems.Count -eq 0) {
     Write-Host "`n[+] No suspicious COM registrations or untrusted binaries found." -ForegroundColor Green
 } else {
