@@ -178,8 +178,9 @@ $btnScan.Add_Click({
         } catch { }
     }
 
-    $sorted =$Script:AllEvents | Sort-Object DateTimeObj -Descending;
-    $dataGrid.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[PSObject]]::new($sorted);$txtStatus.Text = "Escaneo completado. Total de eventos detectados: $($Script:AllEvents.Count)";
+    $sorted = @($Script:AllEvents | Sort-Object DateTimeObj -Descending);
+    $dataGrid.ItemsSource =$sorted;
+    $txtStatus.Text = "Escaneo completado. Total de eventos detectados: $($Script:AllEvents.Count)";
     $btnScan.IsEnabled =$true;
 });
 
@@ -210,8 +211,9 @@ $applyFilter = {
         $filtered =$filtered | Where-Object { $_.DateTimeObj -ge$minDate };
     }
 
-    $sortedFiltered =$filtered | Sort-Object DateTimeObj -Descending;
-    $dataGrid.ItemsSource = [System.Collections.ObjectModel.ObservableCollection[PSObject]]::new($sortedFiltered);$txtStatus.Text = "Mostrando $($sortedFiltered.Count) de $($Script:AllEvents.Count) eventos tras aplicar filtros.";
+    $sortedFiltered = @($filtered | Sort-Object DateTimeObj -Descending);
+    $dataGrid.ItemsSource =$sortedFiltered;
+    $txtStatus.Text = "Mostrando $($sortedFiltered.Count) de $($Script:AllEvents.Count) eventos tras aplicar filtros.";
 };
 
 $btnFilter.Add_Click($applyFilter);$txtFilter.Add_KeyDown({ if ($_.Key -eq 'Enter') { &$applyFilter } });
