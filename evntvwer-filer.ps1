@@ -53,7 +53,7 @@ $queries = @(
 
 $results = [System.Collections.Generic.List[PSObject]]::new()
 
-foreach ($target in$queries) {
+foreach ($target in $queries) {
     Write-Host "   -> Escaneando canal: $($target.LogName)..." -ForegroundColor DarkGray
     try {
         $events = Get-WinEvent -FilterHashtable$target -MaxEvents 300 -ErrorAction SilentlyContinue
