@@ -8,7 +8,6 @@ if (-not $isAdmin) {
 }
 
 Clear-Host
-Write-Host "made with love by lily<3" -ForegroundColor Cyan
 Write-Host "`nBINARIES & SIGNATURE AUDIT" -ForegroundColor Cyan
 
 Add-Type -AssemblyName System.Windows.Forms
