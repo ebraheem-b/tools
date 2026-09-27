@@ -37,17 +37,11 @@ $EventMap = @{
     "Microsoft-Windows-Kernel-PnP/Operational:410" = "Dispositivo nuevo iniciado (PnP Oper)"
     "Microsoft-Windows-Kernel-PnP/Operational:411" = "Dispositivo no arrancado (PnP Oper)"
     "Microsoft-Windows-Ntfs/Operational:501"       = "Limpieza de diario USN Journal (Cleaner)"
-    "Microsoft-Windows-Kernel-Boot/Operational:32"  = "Politica de integridad de arranque (Boot Integrity Policy)"
-    "Microsoft-Windows-Kernel-Boot/Operational:33"  = "Estado de carga del hipervisor (Hypervisor Load Status)"
-    "Microsoft-Windows-Kernel-Boot/Operational:125" = "Validacion Secure Boot: integridad de binarios de arranque"
-    "System:12"        = "TPM: Error de inicializacion del modulo de plataforma segura"
-    "System:14"        = "TPM: Fallo en comando del modulo de plataforma segura"
-    "System:15"        = "TPM: Certificado revocado o medida no coincidente"
 }
 
 $queries = @(
     @{ LogName = "Application"; Ids = @(1000, 1001, 1002, 3079) },
-    @{ LogName = "System"; Ids = @(41, 6008, 1001, 4101, 4201, 104, 12, 14, 15) },
+    @{ LogName = "System"; Ids = @(41, 6008, 1001, 4101, 4201, 104) },
     @{ LogName = "Security"; Ids = @(1100, 1102, 4616) },
     @{ LogName = "Windows PowerShell"; Ids = @(400, 800) },
     @{ LogName = "Microsoft-Windows-PowerShell/Operational"; Ids = @(4104) },
@@ -55,8 +49,7 @@ $queries = @(
     @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Ids = @(1116, 1117, 5001, 5007) },
     @{ LogName = "Microsoft-Windows-Kernel-PnP/Device Configuration"; Ids = @(400, 410, 411) },
     @{ LogName = "Microsoft-Windows-Kernel-PnP/Operational"; Ids = @(400, 410, 411) },
-    @{ LogName = "Microsoft-Windows-Ntfs/Operational"; Ids = @(501) },
-    @{ LogName = "Microsoft-Windows-Kernel-Boot/Operational"; Ids = @(32, 33, 125) }
+    @{ LogName = "Microsoft-Windows-Ntfs/Operational"; Ids = @(501) }
 )
 
 $results = [System.Collections.Generic.List[PSObject]]::new()
@@ -79,7 +72,6 @@ foreach ($target in $queries) {
                         "*TaskScheduler*" { "TaskScheduler" }
                         "*Defender*"      { "Defender" }
                         "*Kernel-PnP*"    { "Kernel-PnP" }
-                        "*Kernel-Boot*"   { "Kernel-Boot" }
                         "*Ntfs*"          { "NTFS" }
                         "*PowerShell*"    { "PowerShell" }
                         Default           { $evt.LogName }
