@@ -1,4 +1,4 @@
-﻿#EFI Checker
+# EFI Checker
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
@@ -237,6 +237,90 @@ Write-Host "[*] Leyendo configuracion BCD..." -ForegroundColor Cyan
 $bcdOutput = bcdedit /enum all 2>&1 | Out-String
 $bcdFirmware = bcdedit /enum firmware 2>&1 | Out-String
 
+Write-Host "[*] Verificando firma de binarios referenciados en BCD..." -ForegroundColor Cyan
+$bcdBinaries = @()
+
+$bcdEntries = bcdedit /enum all /v 2>&1 | Out-String
+$currentEntry = ""
+$currentId = ""
+
+foreach ($line in ($bcdEntries -split "`r?`n")) {
+    if ($line -match "^identifier\s+(.+)$") {
+        $currentId = $Matches[1].Trim()
+    }
+    if ($line -match "^description\s+(.+)$") {
+        $currentEntry = $Matches[1].Trim()
+    }
+    if ($line -match "^\s*(path|systemroot)\s+(.+)$") {
+        $rawPath = $Matches[2].Trim()
+
+        $resolvedPaths = @()
+        if ($rawPath -match "^\\EFI\\") {
+            $resolvedPaths += "${espLetter}:$rawPath"
+        }
+        elseif ($rawPath -match "^\\Windows\\|^\\SystemRoot\\") {
+            $sysPath = $rawPath -replace "^\\SystemRoot\\", "\Windows\"
+            Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | ForEach-Object {
+                $candidate = "$($_.Name):$sysPath"
+                if (Test-Path $candidate) { $resolvedPaths += $candidate }
+            }
+        }
+        elseif ($rawPath -match "^[A-Za-z]:\\") {
+            $resolvedPaths += $rawPath
+        }
+        else {
+            $candidate = "${espLetter}:$rawPath"
+            if (Test-Path $candidate) { $resolvedPaths += $candidate }
+            $candidate2 = "$($env:SystemDrive)$rawPath"
+            if (Test-Path $candidate2) { $resolvedPaths += $candidate2 }
+        }
+
+        foreach ($resolved in $resolvedPaths) {
+            if (-not (Test-Path $resolved)) { continue }
+            if (($bcdBinaries | Where-Object { $_.RutaResuelta -eq $resolved }).Count -gt 0) { continue }
+
+            $sig = Get-AuthenticodeSignature $resolved -ErrorAction SilentlyContinue
+            $sigStatus = if ($sig) { $sig.Status.ToString() } else { "NoDisponible" }
+            $publisher = "SIN CERTIFICADO"
+            $thumbprint = ""
+            if ($sig -and $sig.SignerCertificate) {
+                $publisher = $sig.SignerCertificate.Subject
+                $thumbprint = $sig.SignerCertificate.Thumbprint
+            }
+            $hash = ""
+            try { $hash = (Get-FileHash $resolved -Algorithm SHA256).Hash } catch {}
+            $finfo = Get-Item $resolved -Force -ErrorAction SilentlyContinue
+
+            $severity = "OK"
+            $alertas = @()
+            if ($sigStatus -ne "Valid") {
+                $severity = "CRITICO"
+                $alertas += "Firma invalida o ausente: $sigStatus"
+            }
+            if ($sigStatus -eq "Valid" -and $publisher -notmatch "Microsoft") {
+                $severity = "ALTO"
+                $alertas += "Firmante no-Microsoft: $publisher"
+            }
+            if ($alertas.Count -eq 0) { $alertas += "Firma valida (Microsoft)" }
+
+            $bcdBinaries += [PSCustomObject]@{
+                Entrada      = $currentEntry
+                Identificador= $currentId
+                RutaBCD      = $rawPath
+                RutaResuelta = $resolved
+                Tamano       = if ($finfo) { $finfo.Length } else { 0 }
+                Modificado   = if ($finfo) { $finfo.LastWriteTime } else { $null }
+                Firma        = $sigStatus
+                Firmante     = $publisher
+                Thumbprint   = $thumbprint
+                SHA256       = $hash
+                Severidad    = $severity
+                Alertas      = ($alertas -join " | ")
+            }
+        }
+    }
+}
+
 # --- Secure Boot Policy DB/DBX ---
 Write-Host "[*] Consultando bases de datos Secure Boot (DB/DBX)..." -ForegroundColor Cyan
 $dbInfo = ""
@@ -275,11 +359,14 @@ foreach ($drive in $drives) {
     $found = Get-ChildItem $root -Recurse -Force -File -Filter "*.efi" -ErrorAction SilentlyContinue
     if ($found) {
         foreach ($f in $found) {
+            $oSig = Get-AuthenticodeSignature $f.FullName -ErrorAction SilentlyContinue
+            $oFirma = if ($oSig -and $oSig.Status -eq "Valid") { "True" } else { "False" }
             $otherEfi += [PSCustomObject]@{
                 Volumen   = $drive.Name
                 Archivo   = $f.FullName
                 Tamano    = $f.Length
                 Modificado= $f.LastWriteTime
+                Firma     = $oFirma
             }
         }
     }
@@ -775,6 +862,29 @@ if ($critEfis.Count -eq 0) {
     }
 }
 
+$alertText += "--- BINARIOS REFERENCIADOS EN BCD (CADENA DE ARRANQUE) ---`r`n`r`n"
+$bcdBad = $bcdBinaries | Where-Object { $_.Severidad -ne "OK" }
+if ($bcdBinaries.Count -eq 0) {
+    $alertText += "  [INFO] No se pudieron extraer rutas de binarios del BCD.`r`n"
+} elseif ($bcdBad.Count -eq 0) {
+    $alertText += "  [OK] Todos los binarios de arranque ($($bcdBinaries.Count)) tienen firma Microsoft valida.`r`n"
+} else {
+    foreach ($bb in $bcdBad) {
+        $alertText += "  [$($bb.Severidad)] $($bb.RutaBCD)`r`n"
+        $alertText += "         Entrada: $($bb.Entrada) | Firma: $($bb.Firma)`r`n"
+        $alertText += "         Firmante: $($bb.Firmante)`r`n"
+        $alertText += "         -> $($bb.Alertas)`r`n`r`n"
+    }
+}
+$bcdOk = $bcdBinaries | Where-Object { $_.Severidad -eq "OK" }
+if ($bcdOk.Count -gt 0) {
+    $alertText += "  Binarios con firma valida: $($bcdOk.Count)`r`n"
+    foreach ($bo in $bcdOk) {
+        $alertText += "    [OK] $($bo.RutaBCD) -> $($bo.Entrada)`r`n"
+    }
+}
+$alertText += "`r`n"
+
 $alertText += "--- ARCHIVOS OCULTOS EN ESP ---`r`n`r`n"
 if ($hiddenFiles.Count -eq 0) {
     $alertText += "  [OK] No hay archivos ocultos.`r`n"
@@ -948,6 +1058,67 @@ if ([string]::IsNullOrEmpty($dbInfo)) {
 $txtSecureBoot.Text = $sbText
 $splitBCD.Panel2.Controls.Add($txtSecureBoot)
 
+$tabBcdBin = New-Object System.Windows.Forms.TabPage
+$tabBcdBin.Text = "Firma Binarios BCD"
+$tabBcdBin.BackColor = $darkBg
+$tabControl.TabPages.Add($tabBcdBin)
+
+$lblBcdBin = New-Object System.Windows.Forms.Label
+$lblBcdBin.Text = "  Binarios referenciados en la configuracion de arranque (BCD) - Verificacion de firma Authenticode"
+$lblBcdBin.Dock = "Top"
+$lblBcdBin.Height = 28
+$lblBcdBin.Font = $fontBold
+$lblBcdBin.ForeColor = $accentBlue
+$lblBcdBin.BackColor = $panelBg
+$lblBcdBin.Padding = New-Object System.Windows.Forms.Padding(10, 6, 0, 0)
+$tabBcdBin.Controls.Add($lblBcdBin)
+
+$gridBcdBin = New-StyledGrid
+$tabBcdBin.Controls.Add($gridBcdBin)
+$tabBcdBin.Controls.SetChildIndex($gridBcdBin, 0)
+
+$dtBcdBin = New-Object System.Data.DataTable
+$dtBcdBin.Columns.Add("Severidad", [string]) | Out-Null
+$dtBcdBin.Columns.Add("Entrada", [string]) | Out-Null
+$dtBcdBin.Columns.Add("Ruta BCD", [string]) | Out-Null
+$dtBcdBin.Columns.Add("Ruta Real", [string]) | Out-Null
+$dtBcdBin.Columns.Add("Tamano", [int64]) | Out-Null
+$dtBcdBin.Columns.Add("Firma", [string]) | Out-Null
+$dtBcdBin.Columns.Add("Firmante", [string]) | Out-Null
+$dtBcdBin.Columns.Add("SHA256", [string]) | Out-Null
+$dtBcdBin.Columns.Add("Alertas", [string]) | Out-Null
+
+foreach ($bb in $bcdBinaries) {
+    $rBcd = $dtBcdBin.NewRow()
+    $rBcd["Severidad"] = $bb.Severidad
+    $rBcd["Entrada"] = $bb.Entrada
+    $rBcd["Ruta BCD"] = $bb.RutaBCD
+    $rBcd["Ruta Real"] = $bb.RutaResuelta
+    $rBcd["Tamano"] = $bb.Tamano
+    $rBcd["Firma"] = $bb.Firma
+    $rBcd["Firmante"] = $bb.Firmante
+    $rBcd["SHA256"] = $bb.SHA256
+    $rBcd["Alertas"] = $bb.Alertas
+    $dtBcdBin.Rows.Add($rBcd)
+}
+
+$gridBcdBin.DataSource = $dtBcdBin
+
+$gridBcdBin.Add_CellFormatting({
+    param($sender, $e)
+    if ($e.RowIndex -ge 0 -and $sender.Columns[$e.ColumnIndex].Name -eq "Severidad") {
+        $val = $sender.Rows[$e.RowIndex].Cells["Severidad"].Value
+        $color = Get-SeverityColor $val
+        $e.CellStyle.BackColor = $color
+        $e.CellStyle.ForeColor = [System.Drawing.Color]::Black
+    }
+})
+
+$gridBcdBin.Add_CellDoubleClick({
+    param($sender, $e)
+    Show-RowDetail -Grid $sender -RowIndex $e.RowIndex -Title "Detalle Binario BCD"
+})
+
 
 $tab6 = New-Object System.Windows.Forms.TabPage
 $tab6.Text = "Eventos Boot/TPM"
@@ -1055,6 +1226,7 @@ $dt7.Columns.Add("Volumen", [string]) | Out-Null
 $dt7.Columns.Add("Archivo", [string]) | Out-Null
 $dt7.Columns.Add("Tamano", [int64]) | Out-Null
 $dt7.Columns.Add("Modificado", [datetime]) | Out-Null
+$dt7.Columns.Add("Firma", [string]) | Out-Null
 
 foreach ($oe in $otherEfi) {
     $r7 = $dt7.NewRow()
@@ -1062,9 +1234,24 @@ foreach ($oe in $otherEfi) {
     $r7["Archivo"] = $oe.Archivo
     $r7["Tamano"] = $oe.Tamano
     $r7["Modificado"] = $oe.Modificado
+    $r7["Firma"] = $oe.Firma
     $dt7.Rows.Add($r7)
 }
 $grid7.DataSource = $dt7
+
+$grid7.Add_CellFormatting({
+    param($sender, $e)
+    if ($e.RowIndex -ge 0 -and $sender.Columns[$e.ColumnIndex].Name -eq "Firma") {
+        $val = $sender.Rows[$e.RowIndex].Cells["Firma"].Value
+        if ($val -eq "True") {
+            $e.CellStyle.BackColor = [System.Drawing.Color]::FromArgb(220, 255, 220)
+            $e.CellStyle.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 0)
+        } elseif ($val -eq "False") {
+            $e.CellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 220, 220)
+            $e.CellStyle.ForeColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
+        }
+    }
+})
 
 $grid7.Add_CellDoubleClick({
     param($sender, $e)
@@ -1090,4 +1277,7 @@ $form.Add_Load({
 
 [void]$form.ShowDialog()
 
-Write-Host "`n[*] Analisis finalizado." -ForegroundColor Cyan
+Write-Host "`n[*] Desmontando particion EFI..." -ForegroundColor Yellow
+mountvol S: /d 2>$null
+Write-Host "[OK] Particion EFI desmontada." -ForegroundColor Green
+Write-Host "[*] Analisis finalizado." -ForegroundColor Cyan
