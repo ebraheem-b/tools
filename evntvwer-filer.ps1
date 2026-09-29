@@ -17,6 +17,12 @@ $EventMap = @{
     "System:4101"      = "Driver de video crasheado (Hooks DirectX / Overlays)"
     "System:4201"      = "Cambio/Reconexion de interfaz de red"
     "System:104"       = "Limpieza de log del Sistema"
+    "System:7031"      = "Servicio crasheado + accion de recuperacion (Kill forzado)"
+    "System:7034"      = "Servicio terminado inesperadamente (Crash / taskkill)"
+    "System:7035"      = "Solicitud de control enviada a servicio (start/stop request)"
+    "System:7036"      = "Servicio cambio de estado: Iniciado o Detenido (Bypass / sc stop)"
+    "System:7040"      = "Tipo de inicio de servicio cambiado (Disabled = Bypass persistente)"
+    "System:7045"      = "Nuevo servicio instalado en el sistema (Persistencia / Driver)"
     "Security:1100"    = "Servicio EventLog detenido"
     "Security:1102"    = "Registro de auditoria borrado (Cleaner / Antiforense)"
     "Security:4616"    = "Cambio de hora del sistema (Timestomping)"
@@ -41,7 +47,7 @@ $EventMap = @{
 
 $queries = @(
     @{ LogName = "Application"; Ids = @(1000, 1001, 1002, 3079) },
-    @{ LogName = "System"; Ids = @(41, 6008, 1001, 4101, 4201, 104) },
+    @{ LogName = "System"; Ids = @(41, 6008, 1001, 4101, 4201, 104, 7031, 7034, 7035, 7036, 7040, 7045) },
     @{ LogName = "Security"; Ids = @(1100, 1102, 4616) },
     @{ LogName = "Windows PowerShell"; Ids = @(400, 800) },
     @{ LogName = "Microsoft-Windows-PowerShell/Operational"; Ids = @(4104) },
